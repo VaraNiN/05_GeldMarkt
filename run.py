@@ -5,9 +5,11 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import numpy as np
 
-start_date = "2024-04-22"
-end_date = "2025-04-23"
+start_date = "2024-05-01"
+end_date = "2025-05-01"
 
+
+### ETF Data
 def get_stock_data(ticker_symbol, start_str, end_str):
     """
     Fetches historical stock data for a given ticker and date range.
@@ -29,7 +31,7 @@ def get_stock_data(ticker_symbol, start_str, end_str):
     hist = ticker.history(start=start_str, end=end_str)
     return hist
 
-
+colors = 0
 start_date = datetime.strptime(start_date, "%Y-%m-%d")
 end_date = datetime.strptime(end_date, "%Y-%m-%d")
 
@@ -37,7 +39,7 @@ labels = ["iShares Ultrashort Bond", "Invesco Euro Cash 3 Months", "Xtrackers II
 tickers = ["ERNX.DE", "PJEU.DE", "XEON.DE", "PRAB.DE"]
 
 
-
+### Bundesschatz and ECB Data
 file_path = "bundesschatz_combined.csv"
 bundesschatz_data = pd.read_csv(file_path)
 
@@ -49,16 +51,34 @@ bs6m_data = bundesschatz_data[bundesschatz_data["Product Key"] == "BS6MG"]
 bs6m_data = bs6m_data[["Date", "Interest Rate"]]
 bs6m_data["Date"] = pd.to_datetime(bs6m_data["Date"])
 
-
+bs12m_data = bundesschatz_data[bundesschatz_data["Product Key"] == "BS12M"]
+bs12m_data = bs12m_data[["Date", "Interest Rate"]]
+bs12m_data["Date"] = pd.to_datetime(bs12m_data["Date"])
 
 bs1m = [[start_date], [1]]
 bs1m_interest = bs1m_data.loc[bs1m_data["Date"] <= start_date, "Interest Rate"].iloc[-1]
 bs6m = [[start_date], [1]]
 bs6m_interest = bs6m_data.loc[bs6m_data["Date"] <= start_date, "Interest Rate"].iloc[-1]
+bs12m = [[start_date], [1]]
+bs12m_interest = bs12m_data.loc[bs12m_data["Date"] <= start_date, "Interest Rate"].iloc[-1]
+
+
+
+ecb_file_path = "ECB_deposit_facility.csv"
+ecb_data = pd.read_csv(ecb_file_path)
+ecb_data.rename(columns={
+    "DATE": "Date",
+    "Deposit facility - date of changes (raw data) - Level (FM.D.U2.EUR.4F.KR.DFR.LEV)": "Deposit Rate"
+}, inplace=True)
+ecb_data["Date"] = pd.to_datetime(ecb_data["Date"])
+ecb_data = ecb_data[["Date", "Deposit Rate"]]
+ecb = [[start_date], [1]]
+
 
 current_date = start_date
 bs1m_start = start_date
 bs6m_start = start_date
+bs12m_start = start_date
 while current_date <= end_date:
     current_date += timedelta(days=1)
     difference = relativedelta(current_date, start_date)
@@ -83,25 +103,56 @@ while current_date <= end_date:
         bs6m[1].append(bs6m[1][-1])
 
 
+    bs12m[0].append(current_date)
+    if difference.days == 0 and difference.months == 0 and difference.years > 0:
+        days = (current_date - bs12m_start).days
+        bs12m[1].append(bs12m[1][-1] * (1 + bs12m_interest / 100 * days / 365))
+        bs12m_start = current_date
+        bs12m_interest = bs12m_data.loc[bs12m_data["Date"] <= current_date, "Interest Rate"].iloc[-1]
+    else:
+        bs12m[1].append(bs12m[1][-1])
+
+    ecb[0].append(current_date)
+    ecb[1].append(ecb[1][-1] * (1 + ecb_data.loc[ecb_data["Date"] <= current_date, "Deposit Rate"].iloc[-1]/100)**(1/365)) 
+
+
+
 bs1m = np.array(bs1m)
 bs6m = np.array(bs6m)
+bs12m = np.array(bs12m)
+ecb = np.array(ecb)
 
-plt.figure(figsize=(10, 6))
+print("Final values from %s to %s:\n" %(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+
+print(f"Bundesschatz 1 Monat: \t\t{((bs1m[1][-1] - 1) * 100):.3f}")
+print(f"Bundesschatz 6 Monate: \t\t{((bs6m[1][-1] - 1) * 100):.3f}")
+print(f"Bundesschatz 12 Monate: \t{((bs12m[1][-1] - 1) * 100):.3f}")
+print(f"EZB Einlagefazilität: \t\t{((ecb[1][-1] - 1) * 100):.3f}")
+
+
+### Plotting
+plt.figure(figsize=(12, 8)) 
 
 # Loop through tickers and labels to fetch data and plot
 for ticker, label in zip(tickers, labels):
     price_data = get_stock_data(ticker, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-    plt.plot(price_data.index, ((price_data['Close']/price_data['Close'][0]) - 1)*100, label=label)
+    plt.plot(price_data.index, ((price_data['Close'] / price_data['Close'][0]) - 1) * 100, 
+             label=label, linestyle="-.", color=f"C{colors}", linewidth=2)  
+    colors += 1
+    print(f"{label}: \t{((price_data['Close'][-1] / price_data['Close'][0] - 1) * 100):.3f}")
 
-
-
-plt.plot(bs1m[0], (bs1m[1] - 1) * 100, label="Bundesschatz 1 Monat", color="black", linestyle="--")
-plt.plot(bs6m[0], (bs6m[1] - 1) * 100, label="Bundesschatz 6 Monate", color="red", linestyle="--")
+# Plot Bundesschatz and ECB data with increased line width
+plt.plot(bs1m[0], (bs1m[1] - 1) * 100, label="Bundesschatz 1 Monat", linestyle="--", color=f"C{colors+1}", linewidth=2)
+plt.plot(bs6m[0], (bs6m[1] - 1) * 100, label="Bundesschatz 6 Monate", linestyle="--", color=f"C{colors+2}", linewidth=2)
+plt.plot(bs12m[0], (bs12m[1] - 1) * 100, label="Bundesschatz 12 Monate", linestyle="--", color=f"C{colors+3}", linewidth=2)
+plt.plot(ecb[0], (ecb[1] - 1) * 100, label="EZB Einlagefazilität", color="black", linewidth=2)
 
 # Customize the plot
-plt.title("Closing Prices for Multiple Tickers")
-plt.xlabel("Datum")
-plt.ylabel("Bruttorendite (%)")
-plt.legend()
-plt.grid()
+plt.xlabel("Datum", fontsize=14) 
+plt.ylabel("Bruttorendite (%)", fontsize=14)
+plt.xticks(fontsize=12) 
+plt.yticks(fontsize=12)
+plt.legend(fontsize=12) 
+plt.grid(linewidth=0.5)
+plt.savefig("output.png", dpi=300, bbox_inches='tight') 
 plt.show()
